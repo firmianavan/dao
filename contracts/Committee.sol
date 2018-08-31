@@ -26,14 +26,31 @@ contract Committee {
 
     //constants
     //3×30×24×3600/18, 约三月后重新竞选理事
-    uint public roundSpan = 432000;
-    uint public withdrawRound = 144000;
+    uint public roundSpan = 144000;
+    uint public withdrawRound = 72000;
     uint public memberCnt = 9;
 
-    ///startFrom，区块高度，用来定义第一次选举的时间，如，round是3月，startFrom是两月前的高度，则第一次选举大约有一月的时间
+    //-----------------configuring---------------------------
+    function setRoundSpan(uint rs) public{
+        require(msg.sender==ownner,"no permission");
+        roundSpan = rs;
+    }
+    function setWithdrawRound(uint wr) public{
+        require(msg.sender==ownner,"no permission");
+        withdrawRound = wr;
+    }
+    function setMemberCnt(uint nc) public{
+        require(msg.sender==ownner,"no permission");
+        memberCnt = nc;
+        members.length = nc;
+    }
+
+
+    ///
     constructor() public {
         fromHeight = block.number;
         ownner = msg.sender;
+        members.length = memberCnt;
     }
 
     //------------------------------events--------------------------------------------------
@@ -54,6 +71,10 @@ contract Committee {
         address[] _members,
         uint _round
     );
+    event TestEvent(
+        string _msg,
+        uint _num
+    );
     //------------------------------events--------------------------------------------------
 
     /// 候选人在第一次注册后须定期(每个投票周期内)激活
@@ -72,12 +93,14 @@ contract Committee {
         if (block.number-fromHeight >= round){
             //排序得出得票最高的前memberCnt个
             for (uint i = 0;i < candidateIndex.length;i++){
-                for (uint j = memberCnt-1; j>=0; j--){
-                    if (candidates[candidateIndex[i]].weight <= candidates[members[j]].weight){                        
+                for (uint j = memberCnt; j>0; j--){
+                    if (candidates[candidateIndex[i]].weight <= candidates[members[j-1]].weight){                        
                         break;
                     }else{
-                        members[j+1] = members[j];
-                        members[j] = candidateIndex[i];
+                        if (j < memberCnt){
+                            members[j] = members[j-1];
+                        }
+                        members[j-1] = candidateIndex[i];
                     }
                 }
             }
@@ -86,8 +109,20 @@ contract Committee {
         emit NewRoundEvent(members,round);
     }
 
+    function test() public pure returns (uint,uint){
+        uint i = 0;
+        uint j = 2;
+        while ( i < 3){
+            while (j>=0){
+                j = j-1;
+            }
+            i = i+1;
+        }
+        return (i,j);
+    }
+
     function vote(address candidateAddr) public payable {
-        require(block.number - candidates[candidateAddr].refreshHeight < roundSpan, "The candidate you vote did not register in this round");
+        //  require(block.number - candidates[candidateAddr].refreshHeight < roundSpan, "The candidate you vote did not register in this round");
         candidates[candidateAddr].weight += msg.value;
         voters[msg.sender].votes[candidateAddr] += msg.value;
 
@@ -122,12 +157,9 @@ contract Committee {
     function getCandidateVotes(address candidate) public view returns (uint) {
         return (candidates[candidate]).weight;
     }
-    function getMembers() public returns (address[20] ret, uint length) {
+    function getMembers() public returns (address[] ret) {
         newRound();
-        require(candidates[members[memberCnt]].weight > 0, "no enough vote, some candidate has no votes");
-        for (uint i = 0; i < memberCnt; i++){
-            ret[i] = members[i];
-        }
-        return (ret,memberCnt);
+        require(candidates[members[memberCnt-1]].weight > 0, "no enough vote, some candidate has no votes");
+        return members;
     }
 }
