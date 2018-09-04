@@ -1,6 +1,9 @@
-pragma solidity ^0.4.22;
+pragma solidity 0.4.24;
 
-/// @title 理事会选举
+/**
+ * @title committee voting
+ * @author Lin Van <firmianavan@gmail.com>
+ */
 contract Committee {
 
     //用来表示一个选民的所有投票
@@ -8,7 +11,6 @@ contract Committee {
         mapping(address => uint) votes;
     }
 
-    // 一个投票单元，投谁投多少
     struct Candidate {
         uint weight; // 计票的权重=投票者转入的etf金额
         uint refreshHeight;   // 最新一次激活高度
@@ -161,5 +163,15 @@ contract Committee {
         newRound();
         require(candidates[members[memberCnt-1]].weight > 0, "no enough vote, some candidate has no votes");
         return members;
+    }
+    function isMember(address addr) external returns (bool){
+        newRound();
+        require(candidates[members[memberCnt-1]].weight > 0, "no enough vote, some candidate has no votes");
+        for (uint i = 0; i < members.length; i++){
+            if(addr == members[i]){
+                return true;
+            }
+        }
+        return false;
     }
 }
