@@ -1,7 +1,9 @@
+pragma solidity 0.4.24;
+
 /// @title accesss control module.
 /// @author Lin Van (firmianavan@gmail.com)
 /// @dev modified from crypotKitties.
-contract AccessCtl {
+contract AccessCtrl {
 
     //the highest level
     address public ceoAddress;
@@ -28,7 +30,7 @@ contract AccessCtl {
 
     /// @dev Assigns a new address to act as the CEO. Only available to the current CEO.
     /// @param _newCEO The address of the new CEO
-    function setCEO(address _newCEO) external onlyCEO {
+    function setCEO(address _newCEO) public onlyCEO {
         require(_newCEO != address(0));
 
         ceoAddress = _newCEO;
@@ -36,7 +38,7 @@ contract AccessCtl {
 
     /// @dev Assigns a new address to act as the adminA. Only available to the current CEO.
     /// @param _adminA The address of the new _adminA
-    function setAdminA(address _adminA) external onlyCEO {
+    function setAdminA(address _adminA) public onlyCEO {
         require(_adminA != address(0));
 
         adminA = _adminA;
@@ -44,7 +46,7 @@ contract AccessCtl {
 
     /// @dev Assigns a new address to act as the adminB. Only available to the current CEO.
     /// @param _adminB The address of the new adminB
-    function setAdminB(address _adminB) external onlyCEO {
+    function setAdminB(address _adminB) public onlyCEO {
         require(_adminB != address(0));
 
         adminB = _adminB;
@@ -66,7 +68,7 @@ contract AccessCtl {
 
     /// @dev Called by any admin role to pause the contract. Used only when
     ///  a bug or exploit is detected and we need to limit damage.
-    function pause() external onlyAdmin whenNotPaused {
+    function pause() public onlyAdmin whenNotPaused {
         paused = true;
     }
 

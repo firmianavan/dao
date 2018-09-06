@@ -1,9 +1,8 @@
 pragma solidity 0.4.24;
 
-/// @title interface of committee contract
-contract Committee {
-    function isMember(address addr) external returns (bool);
-}
+import "./BaseInterface.sol";
+import "./AccessCtrl.sol";
+
 
 /**
  * @title proposal voting
