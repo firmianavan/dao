@@ -8,23 +8,6 @@ import "./BaseInterface.sol";
  */
 contract Committee is AccessCtrl{
 
-    //用来表示一个选民的所有投票
-    struct Voter {
-        mapping(address => uint) votes;
-    }
-
-    struct MemberRound {
-        uint rank; //
-        mapping(uint => int) voteLogs;//voteId => 投票内容 0:未投票 1:赞成 2:反对
-    }
-
-    struct Candidate {
-        uint weight; // 当前轮次计票的权重=投票者转入的etf金额
-        uint rank; //   当前轮次得票排名（members数组中的索引+1） rank为0意味着未注册或已注销
-        uint guaranty;   // 剩余保证金
-        mapping(uint => MemberRound) rounds; //参与的轮次
-    }
-
     struct Option {
         uint round; //此配置生效时的轮次
         //constants
@@ -39,11 +22,10 @@ contract Committee is AccessCtrl{
         uint fineForWrongVote; // 与最终结果不一致罚金
         uint awardForVote; // 与最终结果一致的奖励
     }
+
     address public baseContract;
 
-    mapping(address => Voter)  voters;
-    mapping(address => Candidate) public candidates;
-
+    mapping(address => uint) ranks;
     address[] public members; //根据当前得票数由大到小的顺序数组
     address[] public onTerm; //在任委员
     Option[] public options;//配置历史
@@ -177,121 +159,140 @@ contract Committee is AccessCtrl{
             assert(members.length >= onTerm.length);
             for (uint i = 0; i < onTerm.length; i++){
                 onTerm[i] = members[i];
-                candidates[onTerm[i]].rounds[round] = MemberRound(i+1);
+                //发放奖励
+                BaseInterface(baseContract).award(members[i],getOption(round).memberSalary);
             }
 
             emit NewRoundEvent(onTerm, round);
         }
         _;
     }
-
-    /// TODO 保证金不够时从members中移除
+    /// @dev 仅从member中移除（不参与记票）并更改其状态
+    function removeFromCandidate(address addr) internal{
+        if (ranks[addr] != 0){
+            for (uint i = ranks[addr]; i<members.length; i++){
+                members[i-1] = members[i];
+            }
+            members.length = members.length-1;
+            ranks[addr] = 0;
+        }
+    }
+    /// @dev 保证金不够时从members中移除
     modifier checkGuaranty(address candiAddr) {
-        require(candidates[candiAddr].guaranty >= getOption(round).minGuaranty, "should provide enough guaranty"); 
+        bool isEnough = (BaseInterface(baseContract).memberBalanceOf(candiAddr)) >= getOption(round).minGuaranty;
+        if (!isEnough){
+            removeFromCandidate(candiAddr);
+        }
+        require(isEnough, "should provide enough guaranty"); 
         _;
     }
 
     /// 候选人须保证充足的保证金，补充保证金也可调用此方法
     function guaranteeForCandidate() public payable{
-        require(msg.value + candidates[msg.sender].guaranty >= getOption(round).guaranty, "should provide enough guaranty");
+        require(msg.value + BaseInterface(baseContract).memberBalanceOf(msg.sender) >= getOption(round).guaranty, "should provide enough guaranty");
 
-        if (candidates[msg.sender].rank == 0){ //rank为0意味着未注册或已注销
+        if (ranks[msg.sender] == 0){ //rank为0意味着未注册或已注销
             members.push(msg.sender);
-            candidates[msg.sender].rank = members.length;
+            ranks[msg.sender] = members.length;
             onChangeWeight(msg.sender);//针对已注销用户重新注册，保留的weight仍可用
         }
-        candidates[msg.sender].guaranty += msg.value;
+        BaseInterface(baseContract).memberDeposit.value(msg.value)(msg.sender);
     }
+    /// @dev 理事会成员注销
     function unregister() public {
-        for (uint i = candidates[msg.sender].rank; i<members.length; i++){
-            members[i-1] = members[i];
-        }
-        members.length = members.length-1;
-        candidates[msg.sender].rank = 0;
-        BaseInterface(baseContract).unregister(msg.sender);
+        removeFromCandidate(msg.sender);
+        uint val = BaseInterface(baseContract).memberBalanceOf(msg.sender);
+        BaseInterface(baseContract).memberWithdraw(msg.sender,val);
+    }
+    /// @dev 理事会提取奖励等，需保证提现后guaranty大于起始的guaranty
+    function candidateWithdraw(uint val) public {
+        require(BaseInterface(baseContract).memberBalanceOf(msg.sender) >= val + getOption(round).guaranty, "should have enough guaranty after withdraw");
+        BaseInterface(baseContract).memberWithdraw(msg.sender,val);
     }
     /// @dev withdraw all(ie. total - guaranty)
-    function receiveAwards() public {
-        BaseInterface(baseContract).withdrawMemberAccountUnit(msg.sender, getOption(round).guaranty);
+    function candidateWithdrawAll() public {
+        uint bal = BaseInterface(baseContract).memberBalanceOf(msg.sender);
+        require(bal >= getOption(round).guaranty, "should have enough guaranty after withdraw");
+        BaseInterface(baseContract).memberWithdraw(msg.sender, bal-getOption(round).guaranty);
     }
 
-    /// @dev 排序前置 保证members始终是有序的. 
+    /// @dev 排序前置 保证members始终是有序的. (插入排序)
     /// 原因是希望solidy不存在一种后台调度系统定时发放发放轮次奖励，而若将轮次结算放到每次vote，getMember动作中，仍会面临整个轮次中没有任何vote或getMeber动作， 是被动的有member发起，
     function onChangeWeight(address mem) internal checkRound{
 
-        uint r = candidates[mem].rank-1; //members中的索引
-        if ( r>0 && candidates[members[r-1]].weight < candidates[mem].weight){ //weight 增加，向前遍历
+        uint r = ranks[mem]-1; //members中的索引
+        if ( r>0 && BaseInterface(baseContract).getVoteSum(members[r-1]) < BaseInterface(baseContract).getVoteSum(mem)){ //weight 增加，向前遍历
             for (uint i = r; i>0; i--){
-                if (candidates[members[i-1]].weight < candidates[members[i]].weight){
-                    candidates[members[i]].rank--;
-                    candidates[members[i-1]].rank++;
+                if (BaseInterface(baseContract).getVoteSum(members[i-1]) < BaseInterface(baseContract).getVoteSum(members[i])){
+                    ranks[members[i]]--;
+                    ranks[members[i-1]]++;
                     address t = members[i];
                     members[i] = members[i-1];
                     members[i-1] = t;
-                    assert(candidates[members[i]].rank == i+1 && candidates[members[i-1]].rank == i);
+                    assert(ranks[members[i]] == i+1 && ranks[members[i-1]] == i);
                 }
             }
-        }else if (r < members.length-1 && candidates[members[r+1]].weight > candidates[mem].weight){ //weight 减少， 向后遍历
+        }else if (r < members.length-1 && BaseInterface(baseContract).getVoteSum(members[r+1]) > BaseInterface(baseContract).getVoteSum(mem)){ //weight 减少， 向后遍历
             for (i = r; i < members.length-1; i++){
-                if (candidates[members[i+1]].weight > candidates[members[i]].weight){
-                    candidates[members[i]].rank++;
-                    candidates[members[i+1]].rank--;
+                if (BaseInterface(baseContract).getVoteSum(members[i+1]) > BaseInterface(baseContract).getVoteSum(members[i])){
+                    ranks[members[i]]++;
+                    ranks[members[i+1]]--;
                     t = members[i];
                     members[i] = members[i+1];
                     members[i+1] = t;
-                    assert(candidates[members[i]].rank == i+1 && candidates[members[i+1]].rank == i+2);
+                    assert(ranks[members[i]] == i+1 && ranks[members[i+1]] == i+2);
                 }
             }
         }
     }
     function vote(address candidateAddr) public payable checkGuaranty(candidateAddr){
-        BaseInterface(baseContract).lock.value(msg.value)(msg.sender);
-
-        candidates[candidateAddr].weight += msg.value;
-        voters[msg.sender].votes[candidateAddr] += msg.value;
+        BaseInterface(baseContract).voterDeposit.value(msg.value)(msg.sender);
+        uint ori = BaseInterface(baseContract).getvote(msg.sender,candidateAddr);
+        BaseInterface(baseContract).setvote(msg.sender,candidateAddr,ori+msg.value);
         onChangeWeight(candidateAddr);        
 
         emit VoteEvent(msg.sender,candidateAddr,msg.value,round);
     }
     function revote(address from, address to, uint value) public checkGuaranty(to){
-        require(candidates[from].weight >= value, "you do not have enough votes");
-        require(voters[msg.sender].votes[from] >= value, "you do not have enough votes");
+        uint fv = BaseInterface(baseContract).getvote(msg.sender, from);
+        require(fv >= value, "you do not have enough votes");
 
-        candidates[from].weight -= value;
-        voters[msg.sender].votes[from] -= value;
+        BaseInterface(baseContract).setvote(msg.sender,from,fv-value);
         onChangeWeight(from);
         emit UnvoteEvent(msg.sender,from,value,round);
 
-        candidates[to].weight += value;
-        voters[msg.sender].votes[to] += value;
+        BaseInterface(baseContract).setvote(msg.sender,to,fv+value);
         onChangeWeight(to);
         emit VoteEvent(msg.sender,to,value,round);
 
     }
 
-    function withdraw(address from, uint value) public {
-        require(candidates[from].weight >= value, "you do not have enough votes");
-        require(voters[msg.sender].votes[from] >= value, "you do not have enough votes");
+    function voterWithdraw(address from, uint value) public {
+        uint fv = BaseInterface(baseContract).getvote(msg.sender, from);
+        require(fv >= value, "you do not have enough votes");
         require(block.number - fromHeight >= getOption(round).withdrawRound, "your funds is still locked now");
-
-        BaseInterface(baseContract).withdraw(msg.sender,value);
+        BaseInterface(baseContract).setvote(msg.sender, from, fv-value);
+        BaseInterface(baseContract).voterWithdraw(msg.sender,value);
 
         onChangeWeight(from);
-        msg.sender.transfer(value);
         emit UnvoteEvent(msg.sender,from,value,round);
     }
 
 
     ///获取投票人对某个candidate的投票数
     function getVoterVotes(address voter, address candidate) public view returns (uint) {
-        return (voters[voter].votes)[candidate];
+        return BaseInterface(baseContract).getvote(voter, candidate);
     }
     ///获取某个candidate的总得票数
     function getCandidateVotes(address candidate) public view returns (uint) {
-        return (candidates[candidate]).weight;
+        return BaseInterface(baseContract).getVoteSum(candidate);
     }
     function getMembers() public  checkRound returns (address[] ret) {
-        return onTerm;
+        ret = new address[](getOption(round).memberCnt);
+        for (uint i = 0; i < onTerm.length; i++){
+            ret[i] = onTerm[i];
+        }
+        return ret;
     }
     function isMember(address addr) external  checkRound returns (bool){
         for (uint i = 0; i < onTerm.length; i++){
@@ -301,4 +302,43 @@ contract Committee is AccessCtrl{
         }
         return false;
     }
+
+
+    /// @dev 根据投票结果对理事奖惩
+    // function feedbackVote(address[] approve, address[] reject, bool finalPass, uint startHeight, uint endHeight) external{
+    //     uint curR = round;
+        
+    //     if (startHeight < fromHeight && fromHeight < endHeight){
+            
+    //         if ((fromHeight - startHeight) >= (endHeight < fromHeight)){
+    //             //votespan大部分落入上一个round
+    //             address[] memory unvote;
+    //         }
+    //     }
+
+    //     if (fromHeight >= endHeight){
+    //         curR = round - 1;
+    //     }
+    // }
+
+    // function minusArray(address[] ori, address[] d1, address[] d2) internal returns (address[] ret){
+    //     for (uint i = 0; i < ori.length; i++){
+    //         bool contains = false;
+    //         for (uint j = 0; j < d1.length; j++){
+    //             if (ori[i] == d1[j]){
+    //                 contains = true;
+    //                 break;
+    //             }
+    //         }
+    //         for (uint j = 0; j < d2.length; j++){
+    //             if (ori[i] == d2[j]){
+    //                 contains = true;
+    //                 break;
+    //             }
+    //         }
+    //         if (!contains){
+    //             ret.push(ori[i]);
+    //         }
+    //     }
+    // }
 }
