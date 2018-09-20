@@ -2,13 +2,13 @@ pragma solidity 0.4.24;
 
 /// @title base interface for its sub-contracts.
 /// @author Lin Van (firmianavan@gmail.com)
-contract BaseInterface {
+contract IBase {
     function balanceOf(address addr) public view returns(uint);
     function voterBalanceOf(address addr) public view returns(uint);
     function memberBalanceOf(address addr) public view returns(uint);
     //--------------member funds operations--------------
-    function voterWithdraw(address addr) external payable;
-    function voterDeposit(address addr, uint value) external;
+    function voterWithdraw(address addr, uint value) external;
+    function voterDeposit(address addr) external payable;
     function memberDeposit(address addr) external payable;
     function memberWithdraw(address addr, uint value) external;
     function award(address memberAddr, uint value) external;

@@ -8,8 +8,6 @@ contract Base is AccessCtrl {
 
     string public name;
     string public symbol;
-    address public committeeAddr;
-    address public ballotAddr;
 
     //投票及收益均以etf的形式放在主合约
     mapping(address => uint) public balanceOf;
@@ -24,21 +22,6 @@ contract Base is AccessCtrl {
         ceoAddress = msg.sender;
     }
 
-    function setCommitteeAddr(address newCommitteeAddr) public onlyAdmin{
-        require(newCommitteeAddr != address(0));
-        committeeAddr = newCommitteeAddr;
-    }
-    function setBallotAddr(address newBallotAddr) public onlyAdmin{
-        require(newBallotAddr != address(0));
-        ballotAddr = newBallotAddr;
-    }
-
-
-    /// @dev Access modifier for call only from sub-contract
-    modifier fromSub() {
-        require(msg.sender == ballotAddr || msg.sender == committeeAddr);
-        _;
-    }
     function () public payable {}
 
 
@@ -74,11 +57,20 @@ contract Base is AccessCtrl {
         memberbalanceOf[memberAddr] += value;
         balanceOf[memberAddr] += value;
     }
+    /// @dev 余额不足时仅罚剩下的ether，不抛异常
     function penalize(address memberAddr, uint value) external fromSub whenNotPaused{
-        require(memberbalanceOf[memberAddr] >= value);
-        require(balanceOf[memberAddr] >= value);
-        memberbalanceOf[memberAddr] -= value;
-        balanceOf[memberAddr] -= value;
+        if (memberbalanceOf[memberAddr] >= value){
+            memberbalanceOf[memberAddr] -= value;
+        }else{
+            memberbalanceOf[memberAddr] = 0;
+        }
+        if(balanceOf[memberAddr] >= value){
+            balanceOf[memberAddr] -= value;
+        }else{
+            balanceOf[memberAddr] = 0;
+        }
+        
+        ICommittee(committeeAddr).guarante(memberAddr,balanceOf[memberAddr]);
     }
 
     // --------------------------------------------- 存储并读写理事会核心数据，方便升级理事会选举合约 ----------------------------------------------
@@ -145,32 +137,14 @@ contract Base is AccessCtrl {
 
         return (addrs, from + length);
     }
-    // function balanceOf(address addr) public view returns(uint);
-    // function voterBalanceOf(address addr) public view returns(uint);
-    // function memberBalanceOf(address addr) public view returns(uint);
-
-    // function setMembers(address[] _members) external fromCommittee{
-    //     members = _members;
-    // }
 
     function getMembers() public view returns (address[] ret) {
         return ICommittee(committeeAddr).getMembers();
     }
 
-    // function isMember(address addr) external view returns (bool){
-    //     for (uint i = 0; i < members.length; i++){
-    //         if(addr == members[i]){
-    //             return true;
-    //         }
-    //     }
-    //     return false;
-    // }
-
-    // //--------------------------------- ballot related --------------------------------------------------
-    // function setBallotResult(uint ballotId, bool isAccepted) external fromBallot{
-    //     ballotResult[ballotId] = isAccepted;
-    // }
+     
 }
 contract ICommittee{
     function getMembers() public view returns (address[]);
+    function guarante(address member,uint left) external;
 }
